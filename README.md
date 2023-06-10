@@ -1,5 +1,8 @@
 # Let's Encrypt Certificate Generator
 
+**Note:** This library is still in development. You can find the simple working code under **sample_codes/main.py**. 
+You can modify and use this code as per your requirements.
+
 This Python library allows you to generate SSL certificates using the Let's Encrypt ACME v2 protocol.
 
 ## Requirements
@@ -14,7 +17,7 @@ This Python library allows you to generate SSL certificates using the Let's Encr
 Clone this repository and install the dependencies:
 
 ```bash
-git clone https://github.com/yourusername/letsencrypt-generator.git
+git clone https://github.com/saichander17/letsencrypt-apis-cert-generation.git
 cd letsencrypt-generator
 pip install -r requirements.txt
 ```
@@ -24,7 +27,7 @@ pip install -r requirements.txt
 To generate a certificate, create an instance of the `CertificateGenerator` class and call the `generate_certificate` method:
 
 ```python
-from letsencrypt_generator import CertificateGenerator
+from src.main import CertificateGenerator
 
 generator = CertificateGenerator('yourdomain.com', 'youremail@example.com')
 generator.generate_certificate()

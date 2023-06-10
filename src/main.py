@@ -11,216 +11,236 @@ from acme import messages, client, crypto_util, challenges, jose
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
+from requests import Response
 
 logging.basicConfig(level=logging.INFO)
 
 
-# Step 1: Generating a Key Pair
-def generate_keypair() -> Tuple[rsa.RSAPrivateKey, bytes]:
-    key: rsa.RSAPrivateKey = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=2048,
-        backend=default_backend()
-    )
-    pem: bytes = key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.TraditionalOpenSSL,
-        encryption_algorithm=serialization.NoEncryption()
-    )
-    return key, pem
+class KeyPair:
+    def __init__(self, filename: str):
+        self.filename = filename
+        self.key, self.pem = self._get_key()
+
+    def _get_key(self) -> Tuple[rsa.RSAPrivateKey, bytes]:
+        if not self.filename:
+            raise FileNotFoundError()
+        if os.path.isfile(self.filename):
+            return self._load_key_from_file()
+        else:
+            raise FileNotFoundError()
+
+    def _load_key_from_file(self) -> Tuple[rsa.RSAPrivateKey, bytes]:
+        with open(self.filename, 'rb') as f:
+            key_pem: bytes = f.read()
+        key: rsa.RSAPrivateKey = serialization.load_pem_private_key(key_pem, password=None, backend=default_backend())
+        return key, key_pem
 
 
-def save_key_to_file(key: bytes, filename: str) -> None:
-    with open(filename, 'wb') as f:
-        f.write(key)
+class AcmeClient:
+    def __init__(self, key: jose.JWKRSA):
+        self.key = key
+        self.client = self._create_acme_client()
+
+    def _create_acme_client(self) -> client.ClientV2:
+        # acme_directory_url: str = 'https://acme-v02.api.letsencrypt.org/directory'
+        acme_directory_url = 'https://acme-staging-v02.api.letsencrypt.org/directory'
+        net: client.ClientNetwork = client.ClientNetwork(self.key)
+        directory: messages.Directory = messages.Directory.from_json(net.get(acme_directory_url).json())
+        acme_client: client.ClientV2 = client.ClientV2(directory, net=net)
+        return acme_client
 
 
-def load_key_from_file(filename: str) -> Tuple[rsa.RSAPrivateKey, bytes]:
-    with open(filename, 'rb') as f:
-        key_pem: bytes = f.read()
-    key: rsa.RSAPrivateKey = serialization.load_pem_private_key(key_pem, password=None, backend=default_backend())
-    return key, key_pem
+class AcmeAccount:
+    def __init__(self, acme_client: client.ClientV2, email: str):
+        self.acme_client = acme_client
+        self.email = email
+        self.account = self._get_or_register_account()
 
-
-def get_key(file_name) -> Tuple[rsa.RSAPrivateKey, bytes]:
-    if not file_name:
-        raise FileNotFoundError()
-    if os.path.isfile(file_name):
-        return load_key_from_file(file_name)
-    else:
-        raise FileNotFoundError()
-
-
-# Step 2: Creating an ACME Account
-def create_acme_client(key: jose.JWKRSA) -> client.ClientV2:
-    # acme_directory_url: str = 'https://acme-v02.api.letsencrypt.org/directory'
-    acme_directory_url = 'https://acme-staging-v02.api.letsencrypt.org/directory'
-    net: client.ClientNetwork = client.ClientNetwork(key)
-    directory: messages.Directory = messages.Directory.from_json(net.get(acme_directory_url).json())
-    acme_client: client.ClientV2 = client.ClientV2(directory, net=net)
-    return acme_client
-
-
-def get_or_register_account(acme_client: client.ClientV2, email: str) -> messages.RegistrationResource:
-    new_reg: messages.NewRegistration = messages.NewRegistration(
-        terms_of_service_agreed=True,
-        contact=('mailto:' + email,)
-    )
-    try:
-        account: messages.RegistrationResource = acme_client.new_account(new_reg)
-    except acme_errors.ConflictError as e:
-        existing_reg = messages.RegistrationResource.from_json(
-            {
-                'uri': e.location,
-                'body': {
-                    "contact": [
-                        f"mailto:{email}"
-                    ],
-                    "termsOfServiceAgreed": True,
-                }
-            }
+    def _get_or_register_account(self) -> messages.RegistrationResource:
+        new_reg: messages.NewRegistration = messages.NewRegistration(
+            terms_of_service_agreed=True,
+            contact=('mailto:' + self.email,)
         )
-        account = acme_client.query_registration(existing_reg)
-    return account
+        try:
+            account: messages.RegistrationResource = self.acme_client.new_account(new_reg)
+        except acme_errors.ConflictError as e:
+            existing_reg = messages.RegistrationResource.from_json(
+                {
+                    'uri': e.location,
+                    'body': {
+                        "contact": [
+                            f"mailto:{self.email}"
+                        ],
+                        "termsOfServiceAgreed": True,
+                    }
+                }
+            )
+            account = self.acme_client.query_registration(existing_reg)
+        return account
 
 
-# Step 3: Generating a Certificate Signing Request (CSR)
-def create_csr(key_pem: bytes, domains: Optional[Union[Set[str], List[str]]] = None,
-               ipaddrs: Optional[List[Union[ipaddress.IPv4Address, ipaddress.IPv6Address]]] = None
-               ) -> bytes:
-    csr: bytes = crypto_util.make_csr(key_pem, domains=domains, ipaddrs=ipaddrs)
-    return csr
+class CertificateRequest:
+    def __init__(self, key_pem: bytes, domains: Optional[Union[Set[str], List[str]]] = None,
+                 ipaddrs: Optional[List[Union[ipaddress.IPv4Address, ipaddress.IPv6Address]]] = None):
+        self.key_pem = key_pem
+        self.domains = domains
+        self.ipaddrs = ipaddrs
+        self.csr = self._create_csr()
+
+    def _create_csr(self) -> bytes:
+        csr: bytes = crypto_util.make_csr(self.key_pem, domains=self.domains, ipaddrs=self.ipaddrs)
+        return csr
 
 
-# Step 4: Requesting a Certificate
-def request_new_order(acme_client: client.ClientV2, csr: bytes) -> messages.OrderResource:
-    order: messages.OrderResource = acme_client.new_order(csr)
-    return order
+class CertificateOrder:
+    def __init__(self, acme_client: client.ClientV2, csr: bytes):
+        self.acme_client = acme_client
+        self.csr = csr
+        self.order = self._request_new_order()
+
+    def _request_new_order(self) -> messages.OrderResource:
+        order: messages.OrderResource = self.acme_client.new_order(self.csr)
+        return order
 
 
-# Step 5: Completing the Challenges
-def find_authz_dns_challenge(order: messages.OrderResource) -> Tuple[messages.AuthorizationResource, messages.ChallengeBody]:
-    r_authz: Optional[messages.AuthorizationResource] = None
-    dns_challenge: Optional[messages.ChallengeBody] = None
-    for authz in order.authorizations:
-        for challenge in authz.body.challenges:
-            if isinstance(challenge.chall, challenges.DNS01):
-                r_authz = authz
-                dns_challenge = challenge
+class Challenge:
+    def __init__(self, order: messages.OrderResource):
+        self.order = order
+        self.authz, self.dns_challenge = self._find_authz_dns_challenge()
+
+    def _find_authz_dns_challenge(self) -> Tuple[messages.AuthorizationResource, messages.ChallengeBody]:
+        r_authz: Optional[messages.AuthorizationResource] = None
+        dns_challenge: Optional[messages.ChallengeBody] = None
+        for authz in self.order.authorizations:
+            for challenge in authz.body.challenges:
+                if isinstance(challenge.chall, challenges.DNS01):
+                    r_authz = authz
+                    dns_challenge = challenge
+                    break
+
+            if r_authz is not None:
                 break
 
-        if r_authz is not None:
-            break
+        if r_authz is None:
+            raise ValueError("No DNS challenge found")
 
-    if r_authz is None:
-        raise ValueError("No DNS challenge found")
-
-    return r_authz, dns_challenge
+        return r_authz, dns_challenge
 
 
-def create_route53_record(domain: str, dns_challenge_validation: str) -> None:
-    route53 = boto3.client('route53')
-    response = route53.change_resource_record_sets(
-        HostedZoneId='Z321NS3IVFGMP8',
-        ChangeBatch={
-            'Changes': [
-                {
-                    'Action': 'UPSERT',
-                    'ResourceRecordSet': {
-                        'Name': f"_acme-challenge.{domain}",
-                        'Type': 'TXT',
-                        'TTL': 300,
-                        'ResourceRecords': [{'Value': '"{}"'.format(dns_challenge_validation)}],
-                    }
-                },
-            ]
-        }
-    )
-    time.sleep(30)
+class DNSProvider:
+    def create_dns_record(self, domain: str, dns_challenge_validation: str):
+        raise NotImplementedError
 
 
-def perform_challenge_validation(acme_client: client.ClientV2, authz: messages.AuthorizationResource, dns_challenge: messages.ChallengeBody) -> messages.AuthorizationResource:
-    dns_txt_value: str = dns_challenge.validation(acme_client.net.key)
-    create_route53_record(authz.body.identifier.value, dns_txt_value)
-
-    try:
-        acme_client.answer_challenge(dns_challenge, dns_challenge.response(acme_client.net.key))
-        authz = acme_client.poll(authz)
-        logging.info('Authorization status: %s', authz[0].body.status)
-    finally:
-        print("ToDo: Write a function to delete the route53 record")
-        # delete_route53_record(domain, dns_challenge_validation)
-
-    return authz
-
-
-# Step 6: Finalizing the Order
-def finalize_order_and_download_certificate(acme_client: client.ClientV2, order: messages.OrderResource) -> str:
-    try:
-        order = acme_client.poll_and_finalize(order)
-    except acme_errors.ValidationError:
-        print("Validation failed. Please check your DNS record")
-
-    cert: str = order.fullchain_pem
-    return cert
+class Route53DNSProvider(DNSProvider):
+    def create_dns_record(self, domain: str, dns_challenge_validation: str):
+        route53 = boto3.client('route53')
+        response = route53.change_resource_record_sets(
+            HostedZoneId='AAAAAAAAA',
+            ChangeBatch={
+                'Changes': [
+                    {
+                        'Action': 'UPSERT',
+                        'ResourceRecordSet': {
+                            'Name': f"_acme-challenge.{domain}",
+                            'Type': 'TXT',
+                            'TTL': 300,
+                            'ResourceRecords': [{'Value': '"{}"'.format(dns_challenge_validation)}],
+                        }
+                    },
+                ]
+            }
+        )
+        time.sleep(30)
 
 
-# Step 7: Downloading the Certificate
-def save_key_and_certificate_to_files(certificate_pem: str) -> None:
-    with open('certificate.pem', 'w') as f:
-        f.write(certificate_pem)
-    logging.info('Private key and certificate saved to files.')
+class ChallengeValidator:
+    def __init__(self, acme_client: client.ClientV2, authz: messages.AuthorizationResource, dns_challenge: messages.ChallengeBody, dns_provider: DNSProvider):
+        self.acme_client = acme_client
+        self.authz = authz
+        self.dns_challenge = dns_challenge
+        self.dns_provider = dns_provider
+
+    def perform_challenge_validation(self) -> Tuple[messages.AuthorizationResource, Response]:
+        dns_txt_value: str = self.dns_challenge.validation(self.acme_client.net.key)
+        self.dns_provider.create_dns_record(self.authz.body.identifier.value, dns_txt_value)
+
+        try:
+            self.acme_client.answer_challenge(self.dns_challenge, self.dns_challenge.response(self.acme_client.net.key))
+            rauthz = self.acme_client.poll(self.authz)
+            logging.info('Authorization status: %s', rauthz[0].body.status)
+        finally:
+            print("ToDo: Write a function to delete the route53 record")
+            # delete_route53_record(domain, dns_challenge_validation)
+
+        return rauthz
 
 
-def generate_certificate(domain: str, email: str) -> None:
-    # Get account key pair
-    account_key_filename: Optional[str] = os.getenv(
-        'ACCOUNT_KEY_FILENAME', default='/Users/saichander/sai/letsencrypt-apis-cert-generation/account_key.pem'
-    )
-    try:
-        account_key, account_key_pem = get_key(account_key_filename)
-    except FileNotFoundError:
-        sys.exit(f"Account key file not found: {account_key_filename}")
-    jwk_key = jose.JWKRSA(key=account_key)
+class CertificateDownloader:
+    def __init__(self, acme_client: client.ClientV2, order: messages.OrderResource):
+        self.acme_client = acme_client
+        self.order = order
 
-    # Create a new ACME client
-    acme_client = create_acme_client(jwk_key)
+    def finalize_order_and_download_certificate(self) -> str:
+        try:
+            self.order = self.acme_client.poll_and_finalize(self.order)
+        except acme_errors.ValidationError:
+            print("Validation failed. Please check your DNS record")
 
-    # Register the new account
-    account = get_or_register_account(acme_client, email)
+        cert: str = self.order.fullchain_pem
+        return cert
 
-    # Generate a CSR
-    cert_key_filename: Optional[str] = os.getenv(
-        'CERT_KEY_FILENAME', default='/Users/saichander/sai/letsencrypt-apis-cert-generation/cert_key.pem'
-    )
-    try:
-        cert_key, cert_key_pem = get_key(cert_key_filename)
-    except FileNotFoundError:
-        sys.exit(f"Cert key file not found: {cert_key_filename}")
-    # if cert_key_filename and os.path.isfile(cert_key_filename):
-    #     cert_key, cert_key_pem = load_key_from_file(cert_key_filename)
-    # else:
-    #     cert_key, cert_key_pem = generate_keypair()
-    #     save_key_to_file(cert_key_pem, 'cert_key.pem')
-    csr: bytes = create_csr(cert_key_pem, [domain])
 
-    # Request a new order
-    order: messages.OrderResource = request_new_order(acme_client, csr)
+class CertificateSaver:
+    @staticmethod
+    def save_key_and_certificate_to_files(certificate_pem: str) -> None:
+        with open('certificate.pem', 'w') as f:
+            f.write(certificate_pem)
+        logging.info('Private key and certificate saved to files.')
 
-    # Find the DNS challenge
-    authz: messages.AuthorizationResource
-    dns_challenge: messages.ChallengeBody
-    authz, dns_challenge = find_authz_dns_challenge(order)
 
-    # Perform challenge validation
-    perform_challenge_validation(acme_client, authz, dns_challenge)
+class CertificateGenerator:
+    def __init__(self, domain: str, email: str):
+        self.domain = domain
+        self.email = email
 
-    # Finalize the order and download the certificate
-    certificate_pem: str = finalize_order_and_download_certificate(acme_client, order)
+    def generate_certificate(self) -> None:
+        # Get account key pair
+        account_key = KeyPair('account_key.pem')
+        jwk_key = jose.JWKRSA(key=account_key.key)
 
-    # Save the key and certificate to files
-    save_key_and_certificate_to_files(certificate_pem)
+        # Create a new ACME client
+        acme_client = AcmeClient(jwk_key).client
+
+        # Register the new account
+        account = AcmeAccount(acme_client, self.email).account
+
+        # Generate a CSR
+        cert_key = KeyPair('cert_key.pem')
+        csr: bytes = CertificateRequest(cert_key.pem, [self.domain]).csr
+
+        # Request a new order
+        order: messages.OrderResource = CertificateOrder(acme_client, csr).order
+
+        # Find the DNS challenge
+        authz: messages.AuthorizationResource
+        dns_challenge: messages.ChallengeBody
+        challenge = Challenge(order)
+        authz, dns_challenge = challenge.authz, challenge.dns_challenge
+
+        # Perform challenge validation
+        dns_provider = Route53DNSProvider()
+        validator = ChallengeValidator(acme_client, authz, dns_challenge, dns_provider)
+        validator.perform_challenge_validation()
+
+        # Finalize the order and download the certificate
+        downloader = CertificateDownloader(acme_client, order)
+        certificate_pem: str = downloader.finalize_order_and_download_certificate()
+
+        # Save the key and certificate to files
+        CertificateSaver.save_key_and_certificate_to_files(certificate_pem)
 
 
 if __name__ == "__main__":
-    generate_certificate('abc.abc.com', 'abc@abc.ai')
+    generator = CertificateGenerator('saichander.sixsense.ai', 'sai@sixsense.ai')
+    generator.generate_certificate()
