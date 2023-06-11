@@ -2,6 +2,7 @@
 
 **Note:** This library is still in development. You can find the simple working code under **sample_codes/main.py**. 
 You can modify and use this code as per your requirements.
+If you want to use more modular and extensible code, please read through but understand that this is still in development
 
 This Python library allows you to generate SSL certificates using the Let's Encrypt ACME v2 protocol.
 
