@@ -1,39 +1,28 @@
 import ipaddress
 import logging
-import os
-import sys
 import time
 from typing import Tuple, Optional, Union, Set, List
 
 import boto3
 from acme import errors as acme_errors
 from acme import messages, client, crypto_util, challenges, jose
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from requests import Response
+
+from src.key_managers.key_manager import KeyManager
+from src.key_managers.local_storage_key_manager import LocalFileStorageKeyManager
 
 logging.basicConfig(level=logging.INFO)
 
 
 class KeyPair:
-    def __init__(self, filename: str):
+    def __init__(self, key_manager: KeyManager, filename: str):
+        self.key_manager = key_manager
         self.filename = filename
         self.key, self.pem = self._get_key()
 
     def _get_key(self) -> Tuple[rsa.RSAPrivateKey, bytes]:
-        if not self.filename:
-            raise FileNotFoundError()
-        if os.path.isfile(self.filename):
-            return self._load_key_from_file()
-        else:
-            raise FileNotFoundError()
-
-    def _load_key_from_file(self) -> Tuple[rsa.RSAPrivateKey, bytes]:
-        with open(self.filename, 'rb') as f:
-            key_pem: bytes = f.read()
-        key: rsa.RSAPrivateKey = serialization.load_pem_private_key(key_pem, password=None, backend=default_backend())
-        return key, key_pem
+        return self.key_manager.get_key(self.filename)
 
 
 class AcmeClient:
@@ -192,21 +181,23 @@ class CertificateDownloader:
 
 
 class CertificateSaver:
-    @staticmethod
-    def save_key_and_certificate_to_files(certificate_pem: str) -> None:
-        with open('certificate.pem', 'w') as f:
-            f.write(certificate_pem)
+    def __init__(self, key_manager: KeyManager):
+        self.key_manager = key_manager
+
+    def save_key_and_certificate_to_files(self, certificate_pem: str, filename: str) -> None:
+        self.key_manager.save_certificate(certificate_pem, filename)
         logging.info('Private key and certificate saved to files.')
 
 
 class CertificateGenerator:
-    def __init__(self, domain: str, email: str):
+    def __init__(self, key_manager: KeyManager, domain: str, email: str):
+        self.key_manager = key_manager
         self.domain = domain
         self.email = email
 
     def generate_certificate(self) -> None:
         # Get account key pair
-        account_key = KeyPair('account_key.pem')
+        account_key = KeyPair(key_manager, 'account_key.pem')
         jwk_key = jose.JWKRSA(key=account_key.key)
 
         # Create a new ACME client
@@ -216,7 +207,7 @@ class CertificateGenerator:
         account = AcmeAccount(acme_client, self.email).account
 
         # Generate a CSR
-        cert_key = KeyPair('cert_key.pem')
+        cert_key = KeyPair(key_manager, 'cert_key.pem')
         csr: bytes = CertificateRequest(cert_key.pem, [self.domain]).csr
 
         # Request a new order
@@ -238,9 +229,10 @@ class CertificateGenerator:
         certificate_pem: str = downloader.finalize_order_and_download_certificate()
 
         # Save the key and certificate to files
-        CertificateSaver.save_key_and_certificate_to_files(certificate_pem)
+        CertificateSaver(key_manager).save_key_and_certificate_to_files(certificate_pem, 'certificate.pem')
 
 
 if __name__ == "__main__":
-    generator = CertificateGenerator('saichander.sixsense.ai', 'sai@sixsense.ai')
+    key_manager = LocalFileStorageKeyManager()
+    generator = CertificateGenerator(key_manager, 'saichander.sixsense.ai', 'sai@sixsense.ai')
     generator.generate_certificate()
