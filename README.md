@@ -24,30 +24,68 @@ pip install -r requirements.txt
 
 ## Usage
 
-To generate a certificate, create an instance of the `CertificateGenerator` class and call the `generate_certificate` method:
+To generate a certificate, you need to create an instance of the CertificateGenerator class and call the generate_certificate method. 
+The CertificateGenerator class requires four parameters: the key manager used to manage keys, the DNS provider used to manage DNS records, the domain for which the certificate is generated, and the email used for registration and notifications.
 
+Here's an example of how to use it:
 ```python
 from src.main import CertificateGenerator
+from src.key_managers.aws_cert_manager import AWSSecretsKeyManager
+from src.dns_providers.route53_provider import Route53DNSProvider
 
-generator = CertificateGenerator('yourdomain.com', 'youremail@example.com')
+key_manager = AWSSecretsKeyManager()
+dns_provider = Route53DNSProvider()
+generator = CertificateGenerator(key_manager, dns_provider, 'yourdomain.com', 'youremail@example.com')
 generator.generate_certificate()
 ```
 This will generate a new SSL certificate for the specified domain and save it to a file named certificate.pem.
 
-## Extending the Library
-The library uses the Adapter pattern to allow you to plug in your own DNS provider. To do this, create a new class that inherits from the DNSProvider class and implement the create_dns_record method:
-from letsencrypt_generator import DNSProvider
+## Key Managers
+Key managers are used to manage keys. The library includes an implementation for AWS Secrets Manager (AWSSecretsManagerFileStorage), which you can use directly.
+
+If you want to use a different key manager, you can create a new class that inherits from the KeyManager class and implement the get_key and save_certificate methods. Here's an example:
+
 
 ```python
+from src.key_managers.key_manager import KeyManager
+
+class MyKeyManager(KeyManager):
+    def get_key(self, secret_name: str):
+        # Your code to retrieve a key goes here
+        pass
+
+    def save_certificate(self, certificate_pem: str, secret_name: str):
+        # Your code to save a certificate goes here
+        pass
+```
+Then, you can use your key manager with the CertificateGenerator:
+```python
+key_manager = MyKeyManager()
+dns_provider = Route53DNSProvider()
+generator = CertificateGenerator(key_manager, dns_provider, 'yourdomain.com', 'youremail@example.com')
+generator.generate_certificate()
+```
+
+## DNS Providers
+DNS providers are used to manage DNS records. The library includes an implementation for AWS Route 53 (Route53DNSProvider), which you can use directly.
+
+If you want to use a different DNS provider, you can create a new class that inherits from the DNSProvider class and implement the create_dns_record method. Here's an example:
+
+```python
+from src.dns_providers.dns_provider import DNSProvider
+
 class MyDNSProvider(DNSProvider):
     def create_dns_record(self, domain: str, dns_challenge_validation: str):
         # Your code to create a DNS record goes here
+        pass
 ```
-Then, pass an instance of your DNS provider class to the ChallengeValidator:
+Then, you can use your DNS provider with the CertificateGenerator:
+
 ```python
+key_manager = AWSSecretsKeyManager()
 dns_provider = MyDNSProvider()
-validator = ChallengeValidator(acme_client, authz, dns_challenge, dns_provider)
-validator.perform_challenge_validation()
+generator = CertificateGenerator(key_manager, dns_provider, 'yourdomain.com', 'youremail@example.com')
+generator.generate_certificate()
 ```
 
 ## Contributing
@@ -55,4 +93,3 @@ Contributions are welcome! Please submit a pull request or create an issue to pr
 
 ## License
 This project is licensed under the MIT License. See the LICENSE file for details.
-

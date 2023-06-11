@@ -163,8 +163,9 @@ class CertificateSaver:
 
 
 class CertificateGenerator:
-    def __init__(self, key_manager: KeyManager, domain: str, email: str):
+    def __init__(self, key_manager: KeyManager, dns_provider: DNSProvider, domain: str, email: str):
         self.key_manager = key_manager
+        self.dns_provider = dns_provider
         self.domain = domain
         self.email = email
 
@@ -193,8 +194,7 @@ class CertificateGenerator:
         authz, dns_challenge = challenge.authz, challenge.dns_challenge
 
         # Perform challenge validation
-        dns_provider = Route53DNSProvider()
-        validator = ChallengeValidator(acme_client, authz, dns_challenge, dns_provider)
+        validator = ChallengeValidator(acme_client, authz, dns_challenge, self.dns_provider)
         validator.perform_challenge_validation()
 
         # Finalize the order and download the certificate
@@ -207,5 +207,6 @@ class CertificateGenerator:
 
 if __name__ == "__main__":
     key_manager = LocalFileStorageKeyManager()
-    generator = CertificateGenerator(key_manager, 'saichander.sixsense.ai', 'sai@sixsense.ai')
+    dns_provider = Route53DNSProvider()
+    generator = CertificateGenerator(key_manager, dns_provider, 'abc.abc.com', 'abc@abc.com')
     generator.generate_certificate()

@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from src.key_managers.key_manager import KeyManager
 
 
-class AWSSecretsManagerFileStorage(KeyManager):
+class AWSSecretsKeyManager(KeyManager):
     def __init__(self):
         self.client = boto3.client('secretsmanager')
 
