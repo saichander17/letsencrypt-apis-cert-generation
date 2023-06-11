@@ -1,14 +1,14 @@
 import ipaddress
 import logging
-import time
 from typing import Tuple, Optional, Union, Set, List
 
-import boto3
 from acme import errors as acme_errors
 from acme import messages, client, crypto_util, challenges, jose
 from cryptography.hazmat.primitives.asymmetric import rsa
 from requests import Response
 
+from src.dns_providers.dns_provider import DNSProvider
+from src.dns_providers.route53_provider import Route53DNSProvider
 from src.key_managers.key_manager import KeyManager
 from src.key_managers.local_storage_key_manager import LocalFileStorageKeyManager
 
@@ -114,33 +114,6 @@ class Challenge:
             raise ValueError("No DNS challenge found")
 
         return r_authz, dns_challenge
-
-
-class DNSProvider:
-    def create_dns_record(self, domain: str, dns_challenge_validation: str):
-        raise NotImplementedError
-
-
-class Route53DNSProvider(DNSProvider):
-    def create_dns_record(self, domain: str, dns_challenge_validation: str):
-        route53 = boto3.client('route53')
-        response = route53.change_resource_record_sets(
-            HostedZoneId='AAAAAAAAA',
-            ChangeBatch={
-                'Changes': [
-                    {
-                        'Action': 'UPSERT',
-                        'ResourceRecordSet': {
-                            'Name': f"_acme-challenge.{domain}",
-                            'Type': 'TXT',
-                            'TTL': 300,
-                            'ResourceRecords': [{'Value': '"{}"'.format(dns_challenge_validation)}],
-                        }
-                    },
-                ]
-            }
-        )
-        time.sleep(30)
 
 
 class ChallengeValidator:
